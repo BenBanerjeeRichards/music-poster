@@ -7,6 +7,10 @@ from compute import *
 import json
 import dateutil.parser
 
+ALBUMS_TO_IGNORE = [
+    "3UVJu0QdTJBfGJBl1AMWEM"  # Remaster version of Either/Or - just use original instead
+]
+
 
 class Track:
     def __init__(self, date, song_id, artist_id, album_id, song, artist, album, large_cover=None, med_cover=None,
@@ -31,26 +35,18 @@ class Track:
 
 class PosterImage:
 
-    def __init__(self, width, height):
+    def __init__(self, width, height, left_margin, top_margin):
         self.width = width
         self.height = height
-        self.base = Image.new("RGB", (width, height), "black")
+        self.left_margin = left_margin
+        self.top_margin = top_margin
+        self.base = Image.new("RGB", (width, height), "white")
 
     def add_image(self, image: Image, x_pos: float, y_pos: float):
-        # assert (0 <= x_pos <= 1)
-        # assert (0 <= y_pos <= 1)
-        # assert (self.can_fit_at(image, x_pos, y_pos))
-        self.base.paste(image, (x_pos, y_pos))
-
-    def can_fit_at(self, image: Image, x_pos: float, y_pos: float):
-        assert (0 <= x_pos <= 1)
-        assert (0 <= y_pos <= 1)
-        end_x = int(x_pos * self.width) + image.width
-        end_y = int(y_pos * self.width) + image.height
-        return end_x <= self.width and end_y <= self.height
+        self.base.paste(image, (x_pos + self.left_margin, y_pos + self.top_margin))
 
     def save(self):
-        self.base.save("out.png", quality=95)
+        self.base.save("out.png")
 
 
 class PosterFitter:
@@ -120,18 +116,15 @@ class Placement:
     def random_coord(self) -> Tuple[int, int]:
         return random.randint(0, self.n_x - 1), random.randint(0, self.n_y - 1)
 
-    def random_place(self, aid: str, size: int):
-        border = 0
-        if size > 1:
-            border = 1
-
+    def random_place(self, aid: str, size: int, border_basic=0, border_bottom_x=0, border_bottom_y=0):
         # First get list of coords with unallocated space
         spaces = []
         for x in range(self.n_x):
             for y in range(self.n_y):
                 can_place = self.can_place_at(x, y, size)
-                in_border = (x + border + size - 1 < self.n_x and y + border + size - 1 < self.n_y) and (
-                        x >= border and y >= border)
+                in_border = (
+                                    x + border_bottom_x + size - 1 < self.n_x and y + border_bottom_y + size - 1 < self.n_y) and (
+                                    x >= border_basic and y >= border_basic)
                 if can_place and in_border:
                     spaces.append((x, y))
 
@@ -163,92 +156,40 @@ class Placement:
         y_pos = int(idx / self.n_x)
         return x_pos, y_pos
 
+    def alloc_all_size_ones(self, album_ids):
+        idx = 0
+        for aid in album_ids:
+            while self.places[idx] == 1:
+                idx += 1
+
+            x, y = self.idx_to_coords(idx)
+            self.placements[aid] = (x, y)
+            self.alloc_square(x, y, 1)
+            self.placement_size[aid] = 1
+
     def find_aid_for_index(self, idx):
         x, y = self.idx_to_coords(idx)
         for aid in self.placements:
             if self.placements[aid] == (x, y):
                 return aid
 
-    def push_zeros_to_bottom(self):
-        ones_barrier_idx = 0  # Goes forward
-        zero_barrier_idx = self.n_y * self.n_x  # Goes backwards
-
-        while ones_barrier_idx < zero_barrier_idx:
-
-            # one_barrier = everything behind is a one so find a zero to move down
-            while self.places[ones_barrier_idx] == 1:
-                ones_barrier_idx += 1
-
-            print("Found zero at ", ones_barrier_idx, self.idx_to_coords(ones_barrier_idx))
-
-            # We have a zero, so replace with a one from lower down
-            # Find next one which MUST be of size 1 (larger sizes don't bother)
-            while True:
-                zero_barrier_idx -= 1
-                print(zero_barrier_idx)
-
-                aid = self.find_aid_for_index(zero_barrier_idx)
-
-                if self.places[zero_barrier_idx] == 0:
-                    continue
-
-                if aid is None:
-                    print("A_ID NONE!!!")
-                    continue
-
-                if self.placement_size[aid] > 1:
-                    continue
-
-                break
-
-            # Now do the flip flop
-            self.placements[aid] = self.idx_to_coords(ones_barrier_idx)
-            self.places[ones_barrier_idx] = 1
-            self.places[zero_barrier_idx] = 0
-            print(
-                f"SWAP {zero_barrier_idx} -> {ones_barrier_idx} = {self.idx_to_coords(zero_barrier_idx)} -> {self.idx_to_coords(ones_barrier_idx)}")
-            zero_barrier_idx -= 1
-            ones_barrier_idx += 1
-
-    def push_to_end(self):
-        idx = self.n_x * self.n_y - 1
-        while idx >= 1:
-            if self.places[idx] == 0:
-                idx -= 1
+    def remove_final_ones(self):
+        row = self.n_y - 1
+        while row > 0:
+            if self.is_free(0, row):
+                row -= 1
                 continue
 
-            # So here idx points to a 1, find a zero further back to swap with
-            zero_idx = idx
-
-            aid = self.find_aid_for_index(idx)
-            print(f"{aid} for {idx}")
-            assert self.places[idx] == 1
-
-            assert aid is not None
-            if self.placement_size[aid] > 1:
-                idx -= 1
-                continue
-
-            while True:
-                zero_idx -= 1
-                if zero_idx <= 0:
+            for col in range(self.n_x):
+                idx = self._xy_to_index(col, row)
+                if self.places[idx] == 0:
                     break
 
-                if self.places[zero_idx] == 1:
-                    continue
-
-                print("GOT IT ")
-                break
-
-            if zero_idx <= 0:
-                return  # Done
-
-            aid = self.find_aid_for_index(zero_idx)
-            print(f"SWAPPED {zero_idx} {idx}")
-            self.places[zero_idx] = 1
-            self.places[idx] = 0
-            self.placements[aid] = self.idx_to_coords(zero_idx)
-            idx -= 1
+                aid = self.find_aid_for_index(idx)
+                self.places[idx] = 0
+                self.placement_size[aid] = 0
+                del self.placements[aid]
+            break
 
 
 def resize_for_size(image: Image, size: int, settings: Settings) -> Image:
@@ -325,18 +266,60 @@ def get_size(freq, brackets, aid: str):
     return 1
 
 
+def get_files(base_dir: str):
+    files = os.listdir(base_dir)
+    if ".DS_Store" in files:
+        files.remove(".DS_Store")
+
+    for aid in ALBUMS_TO_IGNORE:
+        if f"{aid}.png" in files:
+            files.remove(f"{aid}.png")
+            print(f"Removed {aid}")
+
+    return files
+
+
+def do_allocation(settings: Settings, posters):
+    placement = Placement(settings.num_along - settings.excess_cols, settings.num_down)
+
+    i = 0
+    for size, posters_for_size in enumerate(reversed(posters)):
+        size = len(posters) - size
+        placement.print_placement()
+        print()
+
+        if size == 1:
+            placement.alloc_all_size_ones(map(lambda p: poster_id(p), posters_for_size))
+            break
+
+        for poster in posters_for_size:
+            i += 1
+
+            border = 1 + settings.excess_rows
+            if not placement.random_place(poster_id(poster), size, 1, border, border):
+                assert False
+
+            if i % 100 == 0:
+                print(f"Progress: {i}")
+    placement.print_placement()
+    print("Remove ones:")
+    placement.remove_final_ones()
+    placement.print_placement()
+    return placement
+
+
 def main():
     freq = album_frequency()
     brackets = get_brackets(freq)
 
-    base_dir = "artwork-small"
-    canvas_height = 1000
-    canvas_width = int(canvas_height * 1.41)  # A4
-    poster_image = PosterImage(canvas_width, canvas_height)
+    base_dir = "artwork"
+    canvas_height = 9933
+    canvas_width = 14043
 
-    files = os.listdir(base_dir)
-    if ".DS_Store" in files:
-        files.remove(".DS_Store")
+    # canvas_height = 1000
+    # canvas_width = 1400
+
+    files = get_files(base_dir)
 
     N_posters = len(files)
 
@@ -353,61 +336,29 @@ def main():
 
     settings = compute_settings(N_posters, canvas_width, canvas_height,
                                 [(1, counts[0]), (2, counts[1]), (4, counts[2])])
-    num_sq = counts[0] + 4 * counts[1] + 9 * counts[2]
-    print("across x down: ", settings.num_along, settings.num_down)
-    print("width x height: ", canvas_width, canvas_height)
-    print("N posters: ", N_posters)
-    print("Counts: ", counts)
-    print("New num posters", num_sq)
-    print("Diff = ", settings.num_along * settings.num_down - num_sq)
-    print("dim = ", settings.dim)
+    poster_image = PosterImage(canvas_width, canvas_height, int(settings.right_margin_px / 2),
+                               int(settings.bottom_margin_px / 2))
 
+    # Remove small number of albums we can't fit exactly in one square
+    # Not yet sorted so we are removing posters with smallest num. of plays
+    # posters[0] = posters[0][settings.num_in_incomplete_row:]
+    placement = do_allocation(settings, posters)
 
-    placement = Placement(settings.num_along, settings.num_down)
-    # placement.places[20] = 5
-    # placement.print_placement()
-    # print(placement.idx_to_coords(20))
-    # print(placement._xy_to_index(6, 1))
-    #
-    # return
     i = 0
-    for size, posters_for_size in enumerate(reversed(posters)):
-        size = len(posters) - size
-        placement.print_placement()
-        print()
-        for poster in posters_for_size:
-            i += 1
-
-            if size > 1:
-                if not placement.random_place(poster_id(poster), size):
-                    assert False
-            else:
-                if not placement.place_first_fit(poster_id(poster), size):
-                    assert False
-
-            if i % 100 == 0:
-                print(f"Progress: {i}")
-
-    print("DONE DONE DONE")
-    placement.print_placement()
-    # placement.push_zeros_to_bottom()
-    # print("MOVED: ")
-    # placement.print_placement()
-    # print("SHIFTED: ")
-    # # placement.push_to_end()
-    # placement.print_placement()
-
-    print(placement.placements)
+    N = len(placement.placements.keys())
     for aid in placement.placements:
+        i += 1
         image = Image.open(f"{base_dir}/{aid}.png")
         image = resize_for_size(image, placement.placement_size[aid], settings)
         x_row, y_row = placement.placements[aid]
         x = x_row * settings.dim
         y = y_row * settings.dim
         poster_image.add_image(image, x, y)
+        if i % 10 == 0:
+            print(f"{int(100 * i / N)}% Placing images")
 
+    print("Done - saving")
     poster_image.save()
-    print("OK OK OK OK OK OK OK OK OK")
 
 
 if __name__ == "__main__": main()
