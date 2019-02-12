@@ -174,12 +174,13 @@ class Placement:
                 x = int(parts[0])
                 y = int(parts[1])
                 size = int(parts[2])
-                aid = parts[3].replace(" ","")
+                aid = parts[3].replace(" ", "")
                 self.alloc_square(x, y, size)
                 self.placements[aid] = (x, y)
                 self.placement_size[aid] = size
 
     # Weigh by distance to other squares
+    # This function is full of very ineffcient algorithms
     def random_place_weighed(self, aid: str, size: int, border_basic=0, border_bottom_x=0, border_bottom_y=0):
         # First get list of coords with unallocated space
         spaces = []
@@ -201,10 +202,27 @@ class Placement:
         # Now determine weights for each space
         # Find all other squares of this size
         squares_of_size = []
-        distances = [0] * len(spaces)  # Sum of distances to each square
         for album_id in self.placement_size:
             if self.placement_size[album_id] == size:
                 squares_of_size.append(self.placements[album_id])
+
+        # Remove spaces that are close to other sizes
+        new_spaces = []
+        for space in spaces:
+            ok = True
+            for sq_of_size in squares_of_size:
+                if self.are_adjacent(space, sq_of_size, size):
+                    ok = False
+                    break
+
+            if ok:
+                new_spaces.append(space)
+
+        if len(new_spaces) == 0:
+            print("No spaces found, forgotting about adjacency")
+        else:
+            spaces = new_spaces
+        distances = [0] * len(spaces)  # Sum of distances to each square
 
         if len(squares_of_size) == 0:
             # No distances to consider, just to random choice
@@ -218,7 +236,7 @@ class Placement:
                                               candidate_pos[1])
 
             weights = [i / sum(distances) for i in distances]
-
+            print(weights, spaces)
             x, y = random.choices(population=spaces, weights=weights, k=1)[0]
 
         print(x, y, aid)
@@ -226,6 +244,14 @@ class Placement:
         self.placement_size[aid] = size
         self.alloc_square(x, y, size)
         return True
+
+    def are_adjacent(self, c1, c2, size):
+        x1, y1 = c1
+        x2, y2 = c2
+
+        dx = abs(x1 - x2)
+        dy = abs(y1 - y2)
+        return dx <= size and dy <= size
 
     def place_first_fit(self, aid: str, size: int):
         for y in range(self.n_y):
@@ -403,10 +429,10 @@ def main():
     freq = album_frequency()
     brackets = get_brackets(freq)
 
-    do_alloc = False
+    do_alloc = True
     use_placement = "placements/2019-2-12 10:18:32"
 
-    base_dir = "artwork-100"
+    base_dir = "artwork"
     canvas_height = 9933
     canvas_width = 14043
 
