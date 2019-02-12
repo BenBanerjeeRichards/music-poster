@@ -6,6 +6,7 @@ import os
 from compute import *
 import json
 import dateutil.parser
+from numpy import argmax
 
 ALBUMS_TO_IGNORE = [
     "3UVJu0QdTJBfGJBl1AMWEM"  # Remaster version of Either/Or - just use original instead
@@ -140,6 +141,62 @@ class Placement:
         self.alloc_square(x, y, size)
         return True
 
+    # As placement allocation is getting slow, save so we can reload and then just regen image
+    def save(self, file: str):
+        out = f"{self.n_x},{self.n_y}\n"
+        for aid in self.placements:
+            size = self.placement_size[aid]
+
+
+
+
+    # Weigh by distance to other squares
+    def random_place_weighed(self, aid: str, size: int, border_basic=0, border_bottom_x=0, border_bottom_y=0):
+        # First get list of coords with unallocated space
+        spaces = []
+        for x in range(self.n_x):
+            for y in range(self.n_y):
+                can_place = self.can_place_at(x, y, size)
+                in_border = (
+                                    x + border_bottom_x + size - 1 < self.n_x and y + border_bottom_y + size - 1 < self.n_y) and (
+                                    x >= border_basic and y >= border_basic)
+                if can_place and in_border:
+                    spaces.append((x, y))
+
+        if len(spaces) == 0:
+            # Failed to find place
+            print("ERROR: FAILED TO FIND ALLOCATION FOR SIZE = {} ".format(size))
+            self.print_placement()
+            return False
+
+        # Now determine weights for each space
+        # Find all other squares of this size
+        squares_of_size = []
+        distances = [0] * len(spaces)      # Sum of distances to each square
+        for album_id in self.placement_size:
+            if self.placement_size[album_id] == size:
+                squares_of_size.append(self.placements[album_id])
+
+        if len(squares_of_size) == 0:
+            # No distances to consider, just to random choice
+            x, y = random.choice(spaces)
+        else:
+            # For each possible square, consider total distance
+            for i, candidate_pos in enumerate(spaces):
+                distances[i] = 0
+                for square_with_size in squares_of_size:
+                    distances[i] += self.dist(square_with_size[0], square_with_size[1], candidate_pos[0], candidate_pos[1])
+
+            weights = [i/sum(distances) for i in distances]
+
+            x, y = random.choices(population=spaces, weights=weights, k=1)[0]
+
+        print(x, y, aid)
+        self.placements[aid] = (x, y)
+        self.placement_size[aid] = size
+        self.alloc_square(x, y, size)
+        return True
+
     def place_first_fit(self, aid: str, size: int):
         for y in range(self.n_y):
             for x in range(self.n_x):
@@ -190,6 +247,9 @@ class Placement:
                 self.placement_size[aid] = 0
                 del self.placements[aid]
             break
+
+    def dist(self, x1, y1, x2, y2):
+        return math.sqrt(math.pow((x2 - x1), 2) + math.pow((y2 - y1), 2))
 
 
 def resize_for_size(image: Image, size: int, settings: Settings) -> Image:
@@ -296,11 +356,12 @@ def do_allocation(settings: Settings, posters):
             i += 1
 
             border = 1 + settings.excess_rows
-            if not placement.random_place(poster_id(poster), size, 1, border, border):
+            if not placement.random_place_weighed(poster_id(poster), size, 1, border, border):
                 assert False
 
             if i % 100 == 0:
                 print(f"Progress: {i}")
+
     placement.print_placement()
     print("Remove ones:")
     placement.remove_final_ones()
@@ -316,8 +377,8 @@ def main():
     canvas_height = 9933
     canvas_width = 14043
 
-    # canvas_height = 1000
-    # canvas_width = 1400
+    canvas_height = 1000
+    canvas_width = 1400
 
     files = get_files(base_dir)
 
