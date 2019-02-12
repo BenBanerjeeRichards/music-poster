@@ -6,7 +6,7 @@ import os
 from compute import *
 import json
 import dateutil.parser
-from numpy import argmax
+import datetime
 
 ALBUMS_TO_IGNORE = [
     "3UVJu0QdTJBfGJBl1AMWEM"  # Remaster version of Either/Or - just use original instead
@@ -146,9 +146,38 @@ class Placement:
         out = f"{self.n_x},{self.n_y}\n"
         for aid in self.placements:
             size = self.placement_size[aid]
+            x, y = self.placements[aid]
+            out += f"{x}, {y}, {size}, {aid}\n"
 
+        open(file, "w+").write(out)
 
+    def save_with_datetime(self, prefix):
+        now = datetime.datetime.now()
+        file_name = f"{prefix}{now.year}-{now.month}-{now.day} {now.hour}:{now.minute}:{now.second}"
+        self.save(file_name)
 
+    def load(self, file: str):
+        with open(file, "r") as f:
+            lines = f.read().split("\n")
+            xy_parts = lines[0].split(",")
+            self.n_x = int(xy_parts[0])
+            self.n_y = int(xy_parts[1])
+            self.places = [0] * self.n_x * self.n_y
+            self.placements = {}
+            self.placement_size = {}
+
+            for line in lines[1:]:
+                if len(line) == 0:
+                    break
+
+                parts = line.split(",")
+                x = int(parts[0])
+                y = int(parts[1])
+                size = int(parts[2])
+                aid = parts[3].replace(" ","")
+                self.alloc_square(x, y, size)
+                self.placements[aid] = (x, y)
+                self.placement_size[aid] = size
 
     # Weigh by distance to other squares
     def random_place_weighed(self, aid: str, size: int, border_basic=0, border_bottom_x=0, border_bottom_y=0):
@@ -172,7 +201,7 @@ class Placement:
         # Now determine weights for each space
         # Find all other squares of this size
         squares_of_size = []
-        distances = [0] * len(spaces)      # Sum of distances to each square
+        distances = [0] * len(spaces)  # Sum of distances to each square
         for album_id in self.placement_size:
             if self.placement_size[album_id] == size:
                 squares_of_size.append(self.placements[album_id])
@@ -185,9 +214,10 @@ class Placement:
             for i, candidate_pos in enumerate(spaces):
                 distances[i] = 0
                 for square_with_size in squares_of_size:
-                    distances[i] += self.dist(square_with_size[0], square_with_size[1], candidate_pos[0], candidate_pos[1])
+                    distances[i] += self.dist(square_with_size[0], square_with_size[1], candidate_pos[0],
+                                              candidate_pos[1])
 
-            weights = [i/sum(distances) for i in distances]
+            weights = [i / sum(distances) for i in distances]
 
             x, y = random.choices(population=spaces, weights=weights, k=1)[0]
 
@@ -373,7 +403,10 @@ def main():
     freq = album_frequency()
     brackets = get_brackets(freq)
 
-    base_dir = "artwork"
+    do_alloc = False
+    use_placement = "placements/2019-2-12 10:18:32"
+
+    base_dir = "artwork-100"
     canvas_height = 9933
     canvas_width = 14043
 
@@ -403,7 +436,12 @@ def main():
     # Remove small number of albums we can't fit exactly in one square
     # Not yet sorted so we are removing posters with smallest num. of plays
     # posters[0] = posters[0][settings.num_in_incomplete_row:]
-    placement = do_allocation(settings, posters)
+    if do_alloc:
+        placement = do_allocation(settings, posters)
+        placement.save_with_datetime("placements/")
+    else:
+        placement = Placement(0, 0)
+        placement.load(use_placement)
 
     i = 0
     N = len(placement.placements.keys())
