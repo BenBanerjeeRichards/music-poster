@@ -1,9 +1,11 @@
 import requests
 import shutil
+import os
 
+def download_art(ext: str= ""):
+    art = open(f"Spotify-listening-data/art{ext}.csv").read().split("\n")
+    existing_files = os.listdir(f"artwork{ext}")
 
-def download_art():
-    art = open("Spotify-listening-data/art-small.csv").read().split("\n")
     N = len(art)
     i = 0
     for item in art:
@@ -13,9 +15,13 @@ def download_art():
         url = item.split(",")[1]
         id = item.split(",")[0]
 
+        if f"{id}.png" in existing_files:
+            print("skipping existing file")
+            continue
+
         print(f"Downloading [{int(100 * (i / N))}%]  {id}")
         response = requests.get(url, stream=True)
-        with open('artwork-small/{}.png'.format(id), 'wb') as out_file:
+        with open(f"artwork{ext}/{id}.png", "wb") as out_file:
             shutil.copyfileobj(response.raw, out_file)
         del response
 

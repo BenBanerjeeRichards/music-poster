@@ -1,12 +1,11 @@
 from PIL import Image
 import random
-import requests
-import shutil
 import os
 from compute import *
 import json
 import dateutil.parser
 import datetime
+import download
 
 ALBUMS_TO_IGNORE = [
     "3UVJu0QdTJBfGJBl1AMWEM"  # Remaster version of Either/Or - just use original instead
@@ -251,7 +250,10 @@ class Placement:
 
         dx = abs(x1 - x2)
         dy = abs(y1 - y2)
-        return dx <= size and dy <= size
+        additional = 0
+        if size > 2:
+            additional = 2
+        return dx <= size + additional and dy <= size + additional
 
     def place_first_fit(self, aid: str, size: int):
         for y in range(self.n_y):
@@ -425,7 +427,20 @@ def do_allocation(settings: Settings, posters):
     return placement
 
 
+# 165
+def add_safety_margin(image: Image, width, height, px) -> Image:
+    new_image = Image.new("RGB", (width + px * 2, height + px * 2), "white")
+    new_image.paste(image, (px, px))
+    return new_image
+
+
 def main():
+    image = Image.open("out-final-raw.png")
+    safety = add_safety_margin(image, 14043, 9933, 165)
+    print("Saving")
+    safety.save("out-final-raw-safe.png")
+    return
+
     freq = album_frequency()
     brackets = get_brackets(freq)
 
@@ -436,8 +451,8 @@ def main():
     canvas_height = 9933
     canvas_width = 14043
 
-    canvas_height = 1000
-    canvas_width = 1400
+    # canvas_height = 1000
+    # canvas_width = 1400
 
     files = get_files(base_dir)
 
